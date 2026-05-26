@@ -1,0 +1,37 @@
+---
+description: 减少 AI 代码生成幻觉的指导规则，确保生成代码符合项目架构
+alwaysApply: true
+---
+
+# 减少 AI 幻觉指南
+
+## 修改代码前必须确认
+
+1. **先读后写**：修改任何文件前，先完整读取该文件
+2. **追踪调用链**：修改函数前确认其所有调用方（训练 / 推理 / 评测）
+3. **检查 shape**：涉及张量操作时，在修改前确认输入输出 shape
+
+## 本项目禁止的操作
+
+- 不要引入 `requirements.txt`（项目统一用 `pyproject.toml`）
+- 不要使用 `torch.no_grad()` 包裹训练 forward（会阻断梯度）
+- 不要随意升级依赖版本（torch 2.0.1 / transformers 4.31.0 版本敏感）
+- 不要在 `prepare_inputs_labels_for_multimodal()` 之外修改 `input_ids`
+- 不要创建新的特殊 token 而不同步 `constants.py` 和 tokenizer
+
+## 生成新功能时的检查清单
+
+- [ ] 是否与现有 `compress_type` 机制兼容？
+- [ ] 训练路径（`process_tensor`）和推理路径（`online_process_tensor`）是否都已更新？
+- [ ] 新增参数是否已在 `ModelArguments` / `DataArguments` 中注册？
+- [ ] 是否考虑了 DeepSpeed ZeRO 下的参数同步？
+- [ ] 视觉特征维度是否匹配（EVA 输出 1408，projector 输入 1408）？
+
+## 避免常见幻觉场景
+
+| 场景 | 错误做法 | 正确做法 |
+|------|----------|----------|
+| 添加新任务类型 | 硬编码新 task name | 复用 `NAVIGATION_IDENTIFIER` 判定机制 |
+| 修改视频压缩 | 只改 `token_generation` | 同步修改 `process_tensor` 和 `online_process_tensor` |
+| 新增训练参数 | 直接在 `train()` 里用 | 先在 `ModelArguments`/`DataArguments` dataclass 中声明 |
+| 调试推理 | 随机修改 `run_type` | 通过 `model.config.run_type = "eval"` 统一控制 |

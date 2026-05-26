@@ -1,0 +1,59 @@
+---
+description: Python ML 代码风格规范，适用于 Uni-NaVid 所有 Python 文件
+globs: **/*.py
+alwaysApply: false
+---
+
+# Python ML 代码风格规范
+
+## 张量操作
+
+- 始终在注释中标注张量 shape，格式：`# [B, T, C, H, W]`
+- 使用 `einops` 做维度变换，禁止连续多个 `view/reshape` 而不加注释
+- 禁止在 forward 中使用 `.cpu()` / `.numpy()`（除非明确是 eval 阶段）
+
+```python
+# ✅ 正确
+x = self.pool(x)  # [B, T, C, 2, 2] → grid:2 压缩
+
+# ❌ 错误
+x = x.view(x.shape[0], -1, x.shape[2])
+```
+
+## 模型修改规则
+
+- 新增模型参数必须在 `__init__` 中初始化，禁止在 `forward` 中动态创建
+- 修改 `uninavid_arch.py` 时，训练路径（`process_tensor`）和推理路径（`online_process_tensor`）须同步修改
+- 所有新增的 nn.Module 须注册到 `state_dict`，避免权重加载报错
+
+## 函数设计
+
+- 单个函数不超过 80 行；超过时拆分为子函数
+- 复杂算法（如帧合并）须在函数开头注释说明输入输出 shape 与算法逻辑
+- 推理专用函数加 `@torch.no_grad()` 装饰器
+
+## 导入规范
+
+```python
+# 标准库
+import os
+import json
+
+# 第三方（按字母排序）
+import torch
+import torch.nn as nn
+from transformers import AutoTokenizer
+
+# 本地模块
+from uninavid.constants import IMAGE_TOKEN_INDEX
+from uninavid.model.uninavid_arch import UniNaVIDMetaModel
+```
+
+## 命名规范
+
+| 类型 | 规范 | 示例 |
+|------|------|------|
+| 张量变量 | 小写下划线 | `video_feat`, `cur_frame` |
+| 模型类 | 大驼峰 | `UniNaVIDMetaModel` |
+| 常量 | 全大写 | `NAVIGATION_IDENTIFIER` |
+| 私有方法 | 下划线前缀 | `_encode_frames` |

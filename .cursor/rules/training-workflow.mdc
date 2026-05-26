@@ -1,0 +1,64 @@
+---
+description: 训练与实验工作流规范，避免 AI 生成错误的训练代码
+globs: uninavid/train/**/*.py, scripts/**/*.sh
+alwaysApply: false
+---
+
+# 训练工作流规范
+
+## 启动训练
+
+始终通过 DeepSpeed 启动，不要直接 `python train.py`：
+
+```bash
+# ✅ 正确
+deepspeed uninavid/train/train_mem.py \
+    --deepspeed scripts/zero2.json \
+    --version imgsp_v1 \
+    --video_fps 1 \
+    --compress_type "grid:2"
+
+# ❌ 错误（会缺少 FlashAttention patch）
+python uninavid/train/train.py
+```
+
+## 关键超参数默认值（不要随意修改）
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `video_fps` | 1 | 视频采样帧率 |
+| `compress_type` | `"grid:2"` | 每帧 4 token 压缩 |
+| `mm_vision_select_layer` | -2 | EVA 倒数第 2 层 |
+| `model_max_length` | 2048 | 最大序列长度 |
+| `version` | `imgsp_v1` | 对话模板 |
+
+## 数据集 JSON 格式
+
+新增训练数据必须遵循以下格式：
+
+```json
+{
+  "id": "NAV_<task>_<id>",
+  "video": "nav_videos/<filename>.mp4",
+  "conversations": [
+    {
+      "from": "human",
+      "value": "a video of historical observations and an image of the current observation. <image>\n<instruction>"
+    },
+    {
+      "from": "gpt",
+      "value": "forward left stop"
+    }
+  ]
+}
+```
+
+- `id` 含 `NAV_` 前缀时触发导航专用数据增强
+- `<image>` 占位符必须存在且只出现一次
+- human 端首句必须含 `NAVIGATION_IDENTIFIER` 才会走导航分支
+
+## 模型保存与加载
+
+- 保存路径统一放在 `model_zoo/` 下
+- 加载时通过 `load_pretrained_model()` 而非直接 `from_pretrained()`
+- 分体加载（仅 projector）需同时指定 `model_base` 和 `model_path`

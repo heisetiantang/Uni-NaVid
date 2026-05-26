@@ -1,0 +1,33 @@
+---
+description: Uni-NaVid 项目背景与架构上下文，帮助 AI 理解项目目标，减少代码生成幻觉
+alwaysApply: true
+---
+
+# Uni-NaVid 项目上下文
+
+## 项目定位
+
+Uni-NaVid 是一个具身导航 VLA（Vision-Language-Action）模型，发表于 RSS 2025。
+核心任务：将**视频历史帧 + 当前帧**输入 LLM，直接输出离散导航动作（forward / left / right / stop）。
+支持任务：VLN、目标跟踪、ObjectNav、EQA。
+
+## 模型组成
+
+- 视觉编码器：EVA ViT-g（`eva_vit_g.pth`）
+- 语言模型：Vicuna-7B-v1.5
+- 投影头：MLP 2层 + GELU（1408 → 4096）
+- 关键创新：Grid 池化压缩（历史帧 4 token/帧）+ 余弦相似度帧合并
+
+## 核心文件
+
+- `uninavid/model/uninavid_arch.py`：架构核心，token 压缩、帧合并、多模态 embedding 注入
+- `uninavid/model/language_model/llava_llama_vid.py`：LLM 封装
+- `uninavid/train/train.py`：训练主程序，数据加载与 token 化
+- `offline_eval_uninavid.py`：离线推理评测
+
+## 重要约束
+
+- 修改模型结构时，必须同时考虑训练（`process_tensor`）和推理（`online_process_tensor`）两条路径
+- 导航任务判定依赖 `NAVIGATION_IDENTIFIER` 字符串，不要随意修改
+- 特殊 token 共 6 个，修改须同步 `constants.py` 与 `initialize_vision_tokenizer()`
+- 依赖版本固定（torch 2.0.1, transformers 4.31.0），新增依赖前需确认兼容性
