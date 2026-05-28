@@ -29,16 +29,16 @@
 | checkpoint | 对应代码分支 | 不兼容的原因 | 能否用 baseline 代码加载？ |
 |---|---|---|---|
 | `uninavid_baseline` | `main` | — | ✅ 是 |
-| `uninavid_s1_llama31_curriculum` | `feat/llama31` | LLM 从 LLaMA-2 换为 LLaMA-3.1，tokenizer 和模型配置不同 | ❌ 否 |
-| `uninavid_s2_dpo` | `feat/llama31` | 与 S1 架构完全一致，只是权重不同 | ❌ 否（同 S1） |
+| `uninavid_s1_qwen25_curriculum` | `feat/qwen25` | LLM 从 Vicuna-7B（LlamaForCausalLM）换为 Qwen2.5-7B（Qwen2ForCausalLM），tokenizer、词表（152064）、模型类均不同 | ❌ 否 |
+| `uninavid_s2_dpo` | `feat/qwen25` | 与 S1 架构完全一致，只是权重不同 | ❌ 否（同 S1） |
 | `uninavid_s3_siglip` | `feat/siglip` | 视觉编码器变更，`mm_hidden_size` 从 1408 变为 1152，projector 结构不同 | ❌ 否 |
 
 **管理方式：用 Git 分支隔离代码版本**
 
 ```
 main                    ← baseline 代码，加载 uninavid_baseline
-  └─ feat/llama31       ← S1/S2 代码，加载 s1 / s2 checkpoint
-       └─ feat/siglip   ← S3 代码，在 feat/llama31 基础上修改，加载 s3 checkpoint
+  └─ feat/qwen25        ← S1/S2 代码，加载 s1 / s2 checkpoint
+       └─ feat/siglip   ← S3 代码，在 feat/qwen25 基础上修改，加载 s3 checkpoint
 ```
 
 评测时切换分支即切换对应代码，再指定 `MODEL_PATH` 即可加载对应 checkpoint：
@@ -49,8 +49,8 @@ git checkout main
 bash eval.sh --model uninavid_baseline --benchmark r2r
 
 # 评测第一/二阶段
-git checkout feat/llama31
-bash eval.sh --model uninavid_s1_llama31_curriculum --benchmark r2r
+git checkout feat/qwen25
+bash eval.sh --model uninavid_s1_qwen25_curriculum --benchmark r2r
 bash eval.sh --model uninavid_s2_dpo --benchmark r2r
 
 # 评测第三阶段
@@ -79,36 +79,42 @@ bash eval.sh --model uninavid_s3_siglip --benchmark r2r
 
 ---
 
-### 第一阶段：改进 1 + 6（LLaMA-3.1-8B + 课程学习）
+### 第一阶段：改进 7 + 6（Qwen2.5-7B + 课程学习）
 
-#### 改进 1 代码改动
+#### 改进 7 代码改动
 
 **修改文件**：
-- `uninavid/model/language_model/llava_llama_vid.py`：确认 `LlamaForCausalLM` 兼容性（LLaMA-3.1 架构与 LLaMA-2 高度一致，通常无需改动）
-- `scripts/uninavid_stage_1.sh`：`PREV_MODEL` 路径改为 LLaMA-3.1-8B 权重路径
-- `requirements`：`transformers>=4.40`
+- `uninavid/model/language_model/llava_llama_vid.py`：将继承关系从 `LlamaForCausalLM` 改为 `Qwen2ForCausalLM`，适配 Qwen2 的 forward 签名
+- `uninavid/model/conversation.py`：新增 Qwen2.5 对话模板（ChatML 格式）
+- `uninavid/model/builder.py`：检查 tokenizer 特殊 token（`<|im_start|>` / `<|im_end|>`）兼容性
+- `scripts/uninavid_stage_1.sh`：`PREV_MODEL` 路径改为 Qwen2.5-7B-Instruct 权重路径
+- `requirements`：`transformers>=4.37`（Qwen2 支持）
 
 **checkpoint 配置变化**：
 ```
 config.json 中：
-  "_name_or_path": "meta-llama/Meta-Llama-3.1-8B-Instruct"   ← 变化
-  "vocab_size": 128256   ← 变化（LLaMA-3 词表比 LLaMA-2 大）
-  "bos_token_id": 128000 ← 变化
-  "eos_token_id": 128001 ← 变化
+  "_name_or_path": "Qwen/Qwen2.5-7B-Instruct"       ← 变化
+  "architectures": ["Qwen2ForCausalLM"]              ← 变化（原 LlamaForCausalLM）
+  "vocab_size": 152064                               ← 变化（原 Vicuna 32000）
+  "bos_token_id": 151643                             ← 变化
+  "eos_token_id": 151645                             ← 变化
 
 tokenizer_config.json：
-  使用 LLaMA-3 tokenizer（tiktoken）  ← 完全不同，不可混用
+  使用 Qwen2 tokenizer（tiktoken BPE）               ← 完全不同，不可混用
+  chat_template: ChatML 格式（<|im_start|>...<|im_end|>）
 ```
 
-**不兼容原因**：词表大小（32000 → 128256）和 tokenizer 格式完全不同，用 baseline 代码加载会导致 embedding 维度不匹配。
+**不兼容原因**：模型类（`Qwen2ForCausalLM` vs `LlamaForCausalLM`）、词表大小（32000 → 152064）、tokenizer 格式均不同，用 baseline 代码加载会导致类型不匹配或 embedding 维度不匹配。
 
 **分支操作**：
 ```bash
-git checkout -b feat/llama31
+git checkout -b feat/qwen25
 # 修改上述文件后提交
 git add uninavid/model/language_model/llava_llama_vid.py
+git add uninavid/model/conversation.py
+git add uninavid/model/builder.py
 git add scripts/uninavid_stage_1.sh
-git commit -m "feat: replace LLaMA-2 base with LLaMA-3.1-8B"
+git commit -m "feat: replace Vicuna-7B base with Qwen2.5-7B"
 ```
 
 #### 改进 6 代码改动
@@ -118,11 +124,11 @@ git commit -m "feat: replace LLaMA-2 base with LLaMA-3.1-8B"
 **改动内容**：在数据集初始化时，按路径难度字段（步数、转弯次数）对样本排序，训练前期用简单样本，后期逐步引入复杂样本。
 
 **兼容性**：
-- ✅ 纯训练逻辑改动，不影响模型结构，checkpoint 格式与改进 1 完全相同
+- ✅ 纯训练逻辑改动，不影响模型结构，checkpoint 格式与改进 7 完全相同
 - ✅ 训练完成后 checkpoint 可与 S1 的代码/评测脚本直接互换
 
 ```bash
-# 在 feat/llama31 分支上追加提交
+# 在 feat/qwen25 分支上追加提交
 git add uninavid/train/train.py
 git commit -m "feat: add curriculum learning to LazySupervisedDataset"
 ```
@@ -140,17 +146,17 @@ git commit -m "feat: add curriculum learning to LazySupervisedDataset"
 **兼容性**：
 - ✅ 模型架构与 S1 完全一致，`config.json` 无变化
 - ✅ S2 checkpoint 与 S1 代码完全兼容，可用同一套评测代码加载
-- ✅ 在 `feat/llama31` 分支上追加文件即可，无需新分支
+- ✅ 在 `feat/qwen25` 分支上追加文件即可，无需新分支
 
 **checkpoint 关系**：
 ```
-uninavid_s1_llama31_curriculum  ──DPO fine-tune──→  uninavid_s2_dpo
+uninavid_s1_qwen25_curriculum  ──DPO fine-tune──→  uninavid_s2_dpo
        （起点）                                          （结果）
        同一架构，只有权重数值不同
 ```
 
 ```bash
-# 仍在 feat/llama31 分支
+# 仍在 feat/qwen25 分支
 git add uninavid/train/train_dpo.py
 git commit -m "feat: add DPO training script"
 ```
@@ -179,7 +185,7 @@ projector 权重维度：
 
 **分支操作**：
 ```bash
-git checkout feat/llama31
+git checkout feat/qwen25
 git checkout -b feat/siglip
 # 修改上述文件后提交
 git add uninavid/model/multimodal_encoder/siglip_encoder.py
@@ -207,8 +213,8 @@ bash scripts/uninavid_stage_1_siglip.sh
 |---|---|---|---|---|
 | baseline | `uninavid_baseline` | 原始 Vicuna-7B | `main` | 已有 |
 | 第零阶段 | 无新 checkpoint | 改进 10（ToMe） | 任意分支 + `--use-tome` | 无需训练 |
-| 第一阶段 | `uninavid_s1_llama31_curriculum` | 改进 1 + 6（合并） | `feat/llama31` | Stage 1 + Stage 2 |
-| 第二阶段 | `uninavid_s2_dpo` | 改进 2（DPO） | `feat/llama31` | DPO fine-tune（小时级） |
+| 第一阶段 | `uninavid_s1_qwen25_curriculum` | 改进 7 + 6（合并） | `feat/qwen25` | Stage 1 + Stage 2 |
+| 第二阶段 | `uninavid_s2_dpo` | 改进 2（DPO） | `feat/qwen25` | DPO fine-tune（小时级） |
 | 第三阶段 | `uninavid_s3_siglip` | 改进 8（SigLIP） | `feat/siglip` | 仅 Stage 1（1-2 小时） |
 | 第三阶段（可选） | `uninavid_s3_siglip_dino` | 改进 8 + 13（DINOv2） | `feat/siglip` | Stage 1 重训 |
 | 长期规划 | `uninavid_lt_grpo` | 改进 18（PPO/GRPO） | `feat/grpo` | 在线 RL，独立流程 |
@@ -220,14 +226,14 @@ bash scripts/uninavid_stage_1_siglip.sh
 ```
 ~/Uni-NaVid/                               ← 训练仓库
   output/
-    uninavid_s1_llama31_curriculum/        ← 训练产出（原始位置）
+    uninavid_s1_qwen25_curriculum/         ← 训练产出（原始位置）
     uninavid_s2_dpo/
     uninavid_s3_siglip/
 
 ~/NaVid-VLN-CE/                            ← 评测仓库
   model_zoo/                               ← 所有 checkpoint 统一入口（软链接）
     uninavid_baseline/                     ← 原始模型（已有）
-    uninavid_s1_llama31_curriculum/        ← → 软链接到 Uni-NaVid/output/
+    uninavid_s1_qwen25_curriculum/         ← → 软链接到 Uni-NaVid/output/
     uninavid_s2_dpo/                       ← → 软链接
     uninavid_s3_siglip/                    ← → 软链接
     uninavid_s3_siglip_dino/               ← → 软链接
@@ -235,7 +241,7 @@ bash scripts/uninavid_stage_1_siglip.sh
   tmp/                                     ← 评测结果
     results_baseline_r2r/
     results_baseline_tome_r2r/             ← ToMe 对比
-    results_s1_llama31_curriculum_r2r/
+    results_s1_qwen25_curriculum_r2r/
     results_s2_dpo_r2r/
     results_s3_siglip_r2r/
 ```
@@ -250,8 +256,8 @@ bash scripts/uninavid_stage_1_siglip.sh
 cd ~/NaVid-VLN-CE
 
 # 第一阶段完成后
-ln -s ~/Uni-NaVid/output/uninavid_s1_llama31_curriculum \
-      model_zoo/uninavid_s1_llama31_curriculum
+ln -s ~/Uni-NaVid/output/uninavid_s1_qwen25_curriculum \
+      model_zoo/uninavid_s1_qwen25_curriculum
 
 # 第二阶段完成后
 ln -s ~/Uni-NaVid/output/uninavid_s2_dpo \
@@ -284,10 +290,10 @@ bash eval.sh --model uninavid_baseline --benchmark r2r
 # ── 第零阶段：ToMe（任意分支均可）────────────────
 bash eval.sh --model uninavid_baseline --benchmark r2r --use-tome
 
-# ── 第一/二阶段（feat/llama31 分支）─────────────
-git -C ~/Uni-NaVid checkout feat/llama31
-bash eval.sh --model uninavid_s1_llama31_curriculum --benchmark r2r
-bash eval.sh --model uninavid_s2_dpo                --benchmark r2r
+# ── 第一/二阶段（feat/qwen25 分支）──────────────
+git -C ~/Uni-NaVid checkout feat/qwen25
+bash eval.sh --model uninavid_s1_qwen25_curriculum --benchmark r2r
+bash eval.sh --model uninavid_s2_dpo               --benchmark r2r
 
 # ── 第三阶段（feat/siglip 分支）──────────────────
 git -C ~/Uni-NaVid checkout feat/siglip
@@ -308,10 +314,10 @@ git -C ~/Uni-NaVid checkout main
 bash eval.sh --model uninavid_baseline --benchmark r2r
 bash eval.sh --model uninavid_baseline --benchmark r2r --use-tome
 
-# 第二步：feat/llama31 分支的评测
-git -C ~/Uni-NaVid checkout feat/llama31
-bash eval.sh --model uninavid_s1_llama31_curriculum --benchmark r2r
-bash eval.sh --model uninavid_s2_dpo                --benchmark r2r
+# 第二步：feat/qwen25 分支的评测
+git -C ~/Uni-NaVid checkout feat/qwen25
+bash eval.sh --model uninavid_s1_qwen25_curriculum --benchmark r2r
+bash eval.sh --model uninavid_s2_dpo               --benchmark r2r
 
 # 第三步：feat/siglip 分支的评测
 git -C ~/Uni-NaVid checkout feat/siglip
@@ -334,7 +340,7 @@ python compare_results.py --tmp-dir tmp --sort sr
 python compare_results.py \
   --paths tmp/results_baseline_r2r \
           tmp/results_baseline_tome_r2r \
-          tmp/results_s1_llama31_curriculum_r2r \
+          tmp/results_s1_qwen25_curriculum_r2r \
           tmp/results_s2_dpo_r2r \
           tmp/results_s3_siglip_r2r \
   --sort sr
@@ -365,34 +371,34 @@ python compare_results.py \
 
 
 # ════════════════════════════════════════════════════════
-# 第一阶段：LLaMA-3.1-8B + 课程学习
+# 第一阶段：Qwen2.5-7B + 课程学习
 # ════════════════════════════════════════════════════════
 cd ~/Uni-NaVid
-git checkout -b feat/llama31
+git checkout -b feat/qwen25
 # 修改代码（见各阶段代码改动章节），提交后训练
 bash scripts/uninavid_stage_1.sh
 bash scripts/uninavid_stage_2.sh
 
 cd ~/NaVid-VLN-CE
-ln -s ~/Uni-NaVid/output/uninavid_s1_llama31_curriculum \
-      model_zoo/uninavid_s1_llama31_curriculum
+ln -s ~/Uni-NaVid/output/uninavid_s1_qwen25_curriculum \
+      model_zoo/uninavid_s1_qwen25_curriculum
 
-git -C ~/Uni-NaVid checkout feat/llama31
-bash eval.sh --model uninavid_s1_llama31_curriculum --benchmark r2r
+git -C ~/Uni-NaVid checkout feat/qwen25
+bash eval.sh --model uninavid_s1_qwen25_curriculum --benchmark r2r
 python compare_results.py --tmp-dir tmp --sort sr
 
 
 # ════════════════════════════════════════════════════════
-# 第二阶段：DPO（在 feat/llama31 分支继续）
+# 第二阶段：DPO（在 feat/qwen25 分支继续）
 # ════════════════════════════════════════════════════════
 cd ~/Uni-NaVid
-# feat/llama31 分支上新增 train_dpo.py，准备三元组数据后训练
+# feat/qwen25 分支上新增 train_dpo.py，准备三元组数据后训练
 bash scripts/uninavid_dpo.sh
 
 cd ~/NaVid-VLN-CE
 ln -s ~/Uni-NaVid/output/uninavid_s2_dpo model_zoo/uninavid_s2_dpo
 
-git -C ~/Uni-NaVid checkout feat/llama31
+git -C ~/Uni-NaVid checkout feat/qwen25
 bash eval.sh --model uninavid_s2_dpo --benchmark r2r
 python compare_results.py --tmp-dir tmp --sort sr
 
@@ -401,7 +407,7 @@ python compare_results.py --tmp-dir tmp --sort sr
 # 第三阶段：SigLIP（新建 feat/siglip 分支）
 # ════════════════════════════════════════════════════════
 cd ~/Uni-NaVid
-git checkout feat/llama31
+git checkout feat/qwen25
 git checkout -b feat/siglip
 # 修改代码（siglip_encoder.py / builder.py / uninavid_arch.py），提交后训练
 bash scripts/uninavid_stage_1_siglip.sh   # 仅 Stage 1，约 1-2 小时
@@ -421,10 +427,10 @@ python compare_results.py --tmp-dir tmp --sort sr
 | checkpoint | 大小 | 代码分支 | 备注 |
 |---|---|---|---|
 | `uninavid_baseline`（Vicuna-7B，bf16） | ~14 GB | `main` | 已有 |
-| `uninavid_s1_llama31_curriculum`（LLaMA-3.1-8B） | ~15 GB | `feat/llama31` | 第一阶段 |
-| `uninavid_s2_dpo` | ~15 GB | `feat/llama31` | 第二阶段，与 S1 架构相同 |
+| `uninavid_s1_qwen25_curriculum`（Qwen2.5-7B） | ~14 GB | `feat/qwen25` | 第一阶段 |
+| `uninavid_s2_dpo` | ~14 GB | `feat/qwen25` | 第二阶段，与 S1 架构相同 |
 | `uninavid_s3_siglip` | ~12 GB | `feat/siglip` | 第三阶段，视觉编码器更小 |
 | 软链接 | 0 GB | — | 推荐，节省磁盘 |
 
-> 当前计划实际存储约 **56 GB**（全部软链接，原始文件在 `~/Uni-NaVid/output/` 下）。  
+> 当前计划实际存储约 **54 GB**（全部软链接，原始文件在 `~/Uni-NaVid/output/` 下）。  
 > 若磁盘紧张，S1 checkpoint 在 S2 验收后可考虑删除（S2 是 S1 的超集）。
